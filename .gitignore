@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Per-tutor runtime data (personal info + recorded sessions) — never commit
+data/
+
+# Generated timesheets
+output/
+*.docx
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
