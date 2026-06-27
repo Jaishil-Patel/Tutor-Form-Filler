@@ -84,6 +84,12 @@ class Session:
         except ValueError:
             return self.date
 
+    def display_time_started(self) -> str:
+        return self.time_started.replace(":", "h")
+
+    def display_time_ended(self) -> str:
+        return self.time_ended.replace(":", "h")
+
     @property
     def year(self) -> int:
         return datetime.strptime(self.date, _DATE_ISO).year

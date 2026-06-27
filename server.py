@@ -114,7 +114,17 @@ def index():
 @app.route("/api/sessions", methods=["GET"])
 def list_sessions():
     sessions = storage.load_sessions()
-    sessions.sort(key=lambda s: (s.date, s.time_started))
+    # When a month+year are supplied, only return that month's sessions so the
+    # UI shows a fresh interface per Month of Claim.
+    try:
+        month = int(request.args.get("month"))
+        year = int(request.args.get("year"))
+    except (TypeError, ValueError):
+        month = year = None
+    if month and year and 1 <= month <= 12:
+        sessions = sessions_for_month(sessions, year, month)
+    else:
+        sessions.sort(key=lambda s: (s.date, s.time_started))
     return jsonify([_session_to_json(s) for s in sessions])
 
 
@@ -174,8 +184,8 @@ def get_settings():
         "student_name": s.get("student_name", ""),
         "student_no": s.get("student_no", ""),
         "school": s.get("school", ""),
-        "logo_path": s.get("logo_path", ""),
-        "logo_width_cm": s.get("logo_width_cm", 4.3),
+        "signature_data": s.get("signature_data", ""),
+        "include_signature": bool(s.get("include_signature", False)),
         "course_codes": s.get("course_codes", config.DEFAULT_COURSE_CODES),
         "activities": s.get("activities", config.DEFAULT_ACTIVITIES),
         "logo_exists": os.path.exists(config.resolve_logo_path(s)),
@@ -189,11 +199,11 @@ def save_settings_route():
     settings["student_name"] = (data.get("student_name") or "").strip()
     settings["student_no"] = (data.get("student_no") or "").strip()
     settings["school"] = (data.get("school") or "").strip()
-    settings["logo_path"] = (data.get("logo_path") or "").strip()
-    try:
-        settings["logo_width_cm"] = float(data.get("logo_width_cm", 4.3))
-    except (TypeError, ValueError):
-        return jsonify({"error": "Logo width must be a number."}), 400
+    sig = (data.get("signature_data") or "").strip()
+    if sig and not sig.startswith("data:image"):
+        return jsonify({"error": "Signature must be a drawn image."}), 400
+    settings["signature_data"] = sig
+    settings["include_signature"] = bool(data.get("include_signature", False))
     codes = data.get("course_codes", [])
     if isinstance(codes, str):
         codes = [c.strip() for c in codes.replace(",", "\n").splitlines()]
@@ -205,6 +215,23 @@ def save_settings_route():
 # --------------------------------------------------------------------------
 # Form generation
 # --------------------------------------------------------------------------
+def _download_name(settings: dict, month_name: str) -> str:
+    """User-facing filename 'Name_StudentNo_Month.docx' (sanitized)."""
+    parts = [
+        settings.get("student_name", ""),
+        settings.get("student_no", ""),
+        month_name,
+    ]
+    base = "_".join(p.strip() for p in parts if p and p.strip())
+    # Strip characters that are invalid in Windows filenames.
+    for ch in '\\/:*?"<>|':
+        base = base.replace(ch, "")
+    # Use underscores throughout, e.g. "John Smith" -> "John_Smith".
+    base = "_".join(base.split())
+    base = base.strip("_") or "Timesheet"
+    return f"{base}.docx"
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True)
@@ -226,7 +253,7 @@ def generate():
     settings = storage.load_settings()
     month_name = config.MONTHS[month_num - 1]
     out_path = os.path.join(
-        config.OUTPUT_DIR, f"Timesheet_{month_name}_{year}.docx")
+        config.OUTPUT_DIR, _download_name(settings, month_name))
     try:
         build_timesheet(subset, settings, month_name, out_path)
     except Exception as exc:  # noqa: BLE001
@@ -235,7 +262,7 @@ def generate():
     logo_ok = os.path.exists(config.resolve_logo_path(settings))
     return jsonify({
         "ok": True,
-        "filename": os.path.basename(out_path),
+        "filename": _download_name(settings, month_name),
         "logo_warning": not logo_ok,
         "count": len(subset),
     })
@@ -243,7 +270,8 @@ def generate():
 
 @app.route("/api/download/<month>/<int:year>", methods=["GET"])
 def download(month, year):
-    out_path = os.path.join(config.OUTPUT_DIR, f"Timesheet_{month}_{year}.docx")
+    settings = storage.load_settings()
+    out_path = os.path.join(config.OUTPUT_DIR, _download_name(settings, month))
     if not os.path.exists(out_path):
         return jsonify({"error": "File not found."}), 404
     return send_file(out_path, as_attachment=True,

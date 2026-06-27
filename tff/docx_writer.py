@@ -6,8 +6,10 @@ The only third-party dependency is python-docx.
 
 from __future__ import annotations
 
+import base64
 import os
-from typing import List
+from io import BytesIO
+from typing import List, Optional
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -24,6 +26,8 @@ RED = RGBColor(0xFF, 0x00, 0x00)
 BLACK = RGBColor(0x00, 0x00, 0x00)
 FONT_NAME = "Calibri"
 BODY_PT = 11
+LOGO_WIDTH_CM = 5.0  # fixed logo size (no longer user-configurable)
+SIGNATURE_WIDTH_CM = 4.0  # fixed signature size (no longer user-configurable)
 
 # Main table column widths (cm), proportional to the spec.
 MAIN_COL_WIDTHS_CM = [2.3, 3.3, 2.0, 2.3, 1.8, 2.4, 2.4]
@@ -81,6 +85,29 @@ def _set_cell_text(cell, lines, *, bold=False, color=BLACK):
         first = False
 
 
+def _signature_bytes(settings: dict) -> Optional[bytes]:
+    """Decode the drawn signature ('data:image/png;base64,...') to raw bytes."""
+    data = (settings.get("signature_data") or "").strip()
+    if not data.startswith("data:image"):
+        return None
+    try:
+        return base64.b64decode(data.split(",", 1)[1])
+    except Exception:  # noqa: BLE001 - any malformed data URL -> no signature
+        return None
+
+
+def _set_cell_image(cell, image_path, width_cm):
+    """Replace a cell's content with a single image, top-left aligned."""
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+    para = cell.paragraphs[0]
+    para.text = ""
+    para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    para.paragraph_format.space_after = Pt(0)
+    para.paragraph_format.space_before = Pt(0)
+    run = para.add_run()
+    run.add_picture(image_path, width=Cm(width_cm))
+
+
 def _set_table_borders(table):
     """Apply thin single black borders to every cell of the table."""
     tbl = table._tbl
@@ -133,10 +160,9 @@ def _add_logo(doc, settings):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     logo_path = config.resolve_logo_path(settings)
-    width_cm = float(settings.get("logo_width_cm", 4.3))
     if logo_path and os.path.exists(logo_path):
         run = p.add_run()
-        run.add_picture(logo_path, width=Cm(width_cm))
+        run.add_picture(logo_path, width=Cm(LOGO_WIDTH_CM))
     else:
         run = p.add_run("[University of the Witwatersrand logo]")
         _set_run_font(run, italic=True)
@@ -166,11 +192,14 @@ def _add_student_info(doc, settings, month_label):
     _blank_paragraph(doc)
 
 
-def _add_main_table(doc, sessions: List[Session]):
+def _add_main_table(doc, sessions: List[Session], settings: dict):
     n_rows = 1 + len(sessions)
     table = doc.add_table(rows=n_rows, cols=7)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     _set_table_borders(table)
+
+    # Optional drawn signature stamped into the Student signature column.
+    sig_bytes = _signature_bytes(settings) if settings.get("include_signature") else None
 
     # header row
     for idx, heading in enumerate(MAIN_HEADERS):
@@ -184,10 +213,14 @@ def _add_main_table(doc, sessions: List[Session]):
         if s.activity:
             duties.append(s.activity)
         _set_cell_text(cells[1], duties, bold=False, color=BLACK)
-        _set_cell_text(cells[2], s.time_started, bold=False, color=BLACK)
-        _set_cell_text(cells[3], s.time_ended, bold=False, color=BLACK)
+        _set_cell_text(cells[2], s.display_time_started(), bold=False, color=BLACK)
+        _set_cell_text(cells[3], s.display_time_ended(), bold=False, color=BLACK)
         _set_cell_text(cells[4], s.effective_hours(), bold=False, color=BLACK)
-        _set_cell_text(cells[5], "", bold=False, color=BLACK)
+        if sig_bytes:
+            # fresh stream per row — add_picture consumes the file object
+            _set_cell_image(cells[5], BytesIO(sig_bytes), SIGNATURE_WIDTH_CM)
+        else:
+            _set_cell_text(cells[5], "", bold=False, color=BLACK)
         _set_cell_text(cells[6], "", bold=False, color=BLACK)
 
     _fix_column_widths(table, MAIN_COL_WIDTHS_CM)
@@ -285,7 +318,7 @@ def build_timesheet(sessions: List[Session], settings: dict, month_label: str,
     _add_logo(doc, settings)
     _add_title(doc)
     _add_student_info(doc, settings, month_label)
-    _add_main_table(doc, sessions)
+    _add_main_table(doc, sessions, settings)
     _add_hos_line(doc)
     _add_submission_intro(doc, settings)
     _add_submission_table(doc, settings)

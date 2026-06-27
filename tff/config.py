@@ -80,7 +80,8 @@ DEFAULT_SETTINGS = {
     "student_no": "",
     "school": "",
     "logo_path": "",  # blank -> falls back to assets/wits_logo.png
-    "logo_width_cm": 4.3,
+    "signature_data": "",  # data: URL PNG of the tutor's drawn signature
+    "include_signature": False,  # toggle to stamp it in the signature column
     "submission_intro": (
         "The following dates are the due date for submission of timesheets by "
         "the Schools to the FASO office:"

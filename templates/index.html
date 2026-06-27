@@ -48,8 +48,8 @@
           <tbody id="sessionsBody"></tbody>
         </table>
         <div class="empty" id="emptyState">
-          <p>No sessions recorded.</p>
-          <p class="muted">Click <strong>+ Add session</strong> after each tutoring session.</p>
+          <p>No sessions recorded for <strong id="emptyMonthLabel"></strong>.</p>
+          <p class="muted">Click <strong>+ Add session</strong> to start this month's sessions.</p>
         </div>
       </div>
     </section>
@@ -120,14 +120,22 @@
         <div class="field"><label>Student name</label><input id="sName" /></div>
         <div class="field"><label>Student number</label><input id="sNo" /></div>
         <div class="field"><label>School</label><input id="sSchool" /></div>
-        <div class="field"><label>Logo width (cm)</label><input type="number" step="0.1" id="sLogoW" /></div>
-        <div class="field wide"><label>Logo image path</label><input id="sLogo" placeholder="assets/wits_logo.png" /></div>
+        <div class="field wide">
+          <label class="chk"><input type="checkbox" id="sIncludeSig" /> Include my signature in the Student signature column</label>
+        </div>
+        <div class="field wide">
+          <label>Signature <span class="muted">(draw below)</span></label>
+          <canvas id="sigPad" class="sig-pad" width="500" height="160"></canvas>
+          <div class="sig-actions">
+            <button type="button" class="btn ghost small" id="sigClear">Clear</button>
+            <span class="muted small">Draw with your mouse or finger; click Clear to redo.</span>
+          </div>
+        </div>
         <div class="field wide">
           <label>Course codes <span class="muted">(one per line)</span></label>
           <textarea id="sCourses" rows="6"></textarea>
         </div>
       </div>
-      <p class="muted small">Submission-dates table &amp; red bullet text live in <code>data/settings.json</code>.</p>
       <p class="error" id="settingsError" hidden></p>
       <div class="modal-actions">
         <button class="btn ghost" id="settingsCancel">Cancel</button>

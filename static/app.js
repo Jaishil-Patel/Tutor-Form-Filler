@@ -5,6 +5,7 @@ const MONTHS = ["January", "February", "March", "April", "May", "June",
 
 let settings = { course_codes: [], activities: [] };
 let editingId = null;
+let sigPad = null;
 
 // --- helpers --------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
@@ -41,14 +42,21 @@ function computeHours(start, end) {
 }
 
 // --- sessions -------------------------------------------------------------
+function selectedMonthYear() {
+  return { month: $("genMonth").value, year: $("genYear").value };
+}
+
 async function loadSessions() {
-  const sessions = await api("/api/sessions");
+  const { month, year } = selectedMonthYear();
+  const sessions = await api(`/api/sessions?month=${month}&year=${year}`);
   const body = $("sessionsBody");
   body.innerHTML = "";
+  const label = `${MONTHS[month - 1]} ${year}`;
   $("emptyState").hidden = sessions.length > 0;
+  $("emptyMonthLabel").textContent = label;
   $("countLabel").textContent = sessions.length
-    ? `${sessions.length} session${sessions.length > 1 ? "s" : ""} recorded`
-    : "No sessions yet";
+    ? `${sessions.length} session${sessions.length > 1 ? "s" : ""} in ${label}`
+    : `No sessions in ${label}`;
 
   for (const s of sessions) {
     const tr = document.createElement("tr");
@@ -79,12 +87,23 @@ async function deleteSession(id) {
 }
 
 // --- session modal --------------------------------------------------------
+function defaultDateForSelectedMonth() {
+  const { month, year } = selectedMonthYear();
+  const now = new Date();
+  // If the selected month is the current one, default to today; otherwise the
+  // 1st of the selected month so the new session lands in the shown month.
+  if (Number(month) === now.getMonth() + 1 && Number(year) === now.getFullYear()) {
+    return now.toISOString().slice(0, 10);
+  }
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
 function openSession(s) {
   editingId = s ? s.id : null;
   $("sessionModalTitle").textContent = s ? "Edit session" : "Add session";
   $("sessionError").hidden = true;
 
-  $("fDate").value = s ? s.date : new Date().toISOString().slice(0, 10);
+  $("fDate").value = s ? s.date : defaultDateForSelectedMonth();
   buildCourseOptions(s ? s.course_code : "");
   buildActivityOptions(s ? s.activity : "");
   $("fStart").value = s ? s.time_started : "14:00";
@@ -170,6 +189,51 @@ async function saveSession() {
   }
 }
 
+// --- signature pad --------------------------------------------------------
+function createSigPad(canvas) {
+  const ctx = canvas.getContext("2d");
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#000";
+  let drawing = false;
+  let dirty = false;
+
+  function pos(e) {
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return {
+      x: (t.clientX - r.left) * (canvas.width / r.width),
+      y: (t.clientY - r.top) * (canvas.height / r.height),
+    };
+  }
+  function start(e) { drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+  function move(e) { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); dirty = true; e.preventDefault(); }
+  function end() { drawing = false; }
+
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  canvas.addEventListener("touchstart", start, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  canvas.addEventListener("touchend", end);
+
+  return {
+    clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); dirty = false; },
+    isEmpty() { return !dirty; },
+    toDataURL() { return canvas.toDataURL("image/png"); },
+    fromDataURL(url) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      dirty = false;
+      if (!url) return;
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = url;
+      dirty = true;
+    },
+  };
+}
+
 // --- settings -------------------------------------------------------------
 async function loadSettings() {
   settings = await api("/api/settings");
@@ -179,11 +243,11 @@ function openSettings() {
   $("sName").value = settings.student_name || "";
   $("sNo").value = settings.student_no || "";
   $("sSchool").value = settings.school || "";
-  $("sLogo").value = settings.logo_path || "";
-  $("sLogoW").value = settings.logo_width_cm || 4.3;
+  $("sIncludeSig").checked = !!settings.include_signature;
   $("sCourses").value = (settings.course_codes || []).join("\n");
   $("settingsError").hidden = true;
   $("settingsModal").hidden = false;
+  if (sigPad) sigPad.fromDataURL(settings.signature_data || "");
 }
 
 async function saveSettings() {
@@ -191,8 +255,8 @@ async function saveSettings() {
     student_name: $("sName").value,
     student_no: $("sNo").value,
     school: $("sSchool").value,
-    logo_path: $("sLogo").value,
-    logo_width_cm: $("sLogoW").value,
+    signature_data: sigPad && !sigPad.isEmpty() ? sigPad.toDataURL() : "",
+    include_signature: $("sIncludeSig").checked,
     course_codes: $("sCourses").value,
   };
   try {
@@ -257,10 +321,17 @@ function init() {
   $("settingsBtn").addEventListener("click", openSettings);
   $("generateBtn").addEventListener("click", generate);
 
+  // Changing the Month of Claim refreshes the sessions shown for that month.
+  $("genMonth").addEventListener("change", loadSessions);
+  $("genYear").addEventListener("change", loadSessions);
+
   $("sessionSave").addEventListener("click", saveSession);
   $("sessionCancel").addEventListener("click", () => ($("sessionModal").hidden = true));
   $("settingsSave").addEventListener("click", saveSettings);
   $("settingsCancel").addEventListener("click", () => ($("settingsModal").hidden = true));
+
+  sigPad = createSigPad($("sigPad"));
+  $("sigClear").addEventListener("click", () => sigPad.clear());
 
   $("fStart").addEventListener("input", refreshAuto);
   $("fEnd").addEventListener("input", refreshAuto);
